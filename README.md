@@ -20,12 +20,12 @@ The lab covers:
 
 | Component           | Details                              |
 | ------------------- | ------------------------------------ |
-| **Wazuh Manager**   | `192.168.1.100` (`wazuh-server`)     |
-| **Target Agent**    | `192.168.1.3` (`kalibrute`)          |
-| **Agent ID**        | `002`                                |
+| **Wazuh Manager**   | `ip-wazuh` (`wazuh-server`)     |
+| **Target Agent**    | `ip-agent` (`kalibrute`)          |
+| **Agent ID**        | `00X`                                |
 | **Web Application** | Flask                                |
-| **Application URL** | `http://172.16.88.20:5000/login`     |
-| **Application Log** | `/home/kali/Projects/webapp/app.log` |
+| **Application URL** | `http://ip:5000/login`     |
+| **Application Log** | `/PATH/webapp/app.log` |
 
 ### Architecture
 
@@ -40,7 +40,7 @@ The lab covers:
                               ▼
                  ┌──────────────────────────┐
                  │     Flask Web App        │
-                 │   172.16.88.20:5000      │
+                 │         ip:5000          │
                  │                          │
                  │      /login              │
                  └────────────┬─────────────┘
@@ -50,15 +50,15 @@ The lab covers:
                  ┌──────────────────────────┐
                  │       app.log            │
                  │                          │
-                 │ /home/kali/Projects/     │
-                 │ webapp/app.log           │
+                 │ /PATH/webapp/app.log     │
+                 │                          │
                  └────────────┬─────────────┘
                               │
                               │ Wazuh Agent
                               ▼
                  ┌──────────────────────────┐
                  │     Wazuh Manager        │
-                 │      192.168.1.100       │
+                 │            ip            │
                  │                          │
                  │ Decoder → Rule → Alert   │
                  └────────────┬─────────────┘
@@ -92,47 +92,53 @@ cd /home/kali/Projects/webapp
 Create `/home/kali/Projects/webapp/app.py`:
 
 ```bash
-cat << 'EOF' > /home/kali/Projects/webapp/app.py
-from flask import Flask, request, render_template_string
 import logging
+from flask import Flask, request, render_template_string
 
 app = Flask(__name__)
 
-# Configure logger to output Wazuh-compatible authentication failure logs
-logging.basicConfig(
-    filename='/home/kali/Projects/webapp/app.log',
-    level=logging.WARNING,
-    format='%(asctime)s %(levelname)s [webapp] %(message)s'
-)
+# Set up logger with forced flushing
+logger = logging.getLogger('webapp')
+logger.setLevel(logging.INFO)
+handler = logging.FileHandler('/home/kali/Projects/webapp/app.log')
+handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s [webapp] %(message)s'))
+logger.addHandler(handler)
 
+HTML_FORM = """
+<!DOCTYPE html>
+<html>
+<head><title>Web App Login</title></head>
+<body style="font-family: Arial; margin: 50px;">
+    <h2>Login Page</h2>
+    <form method="POST" action="/login">
+        <label>Username:</label><br>
+        <input type="text" name="username" required><br><br>
+        <label>Password:</label><br>
+        <input type="password" name="password" required><br><br>
+        <input type="submit" value="Login">
+    </form>
+</body>
+</html>
+"""
+
+@app.route('/', methods=['GET'])
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
-        client_ip = request.remote_addr
+    if request.method == 'GET':
+        return render_template_string(HTML_FORM)
 
-        # Simulated authentication logic
-        if username == "admin" and password == "CorrectPassword123":
-            return "Login Successful!", 200
-        else:
-            logging.warning(
-                f"FAILED_LOGIN user='{username}' ip='{client_ip}'"
-            )
-            return "Invalid credentials", 401
+    username = request.form.get('username') or ''
+    password = request.form.get('password') or ''
 
-    return '''
-        <h2>Web Application Login</h2>
-        <form method="post">
-            Username: <input type="text" name="username"><br><br>
-            Password: <input type="password" name="password"><br><br>
-            <input type="submit" value="Login">
-        </form>
-    '''
+    if username == 'admin' and password == 'Secret123':
+        logger.info(f"SUCCESSFUL_LOGIN user='{username}' ip='{request.remote_addr}'")
+        return "<h3>Login Successful!</h3>", 200
+    else:
+        logger.warning(f"FAILED_LOGIN user='{username}' ip='{request.remote_addr}'")
+        return "<h3>Invalid Credentials</h3>", 401
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
-EOF
+    app.run(host='ip', port=5000)
 ```
 
 ---
@@ -162,7 +168,7 @@ ss -lntp | grep 5000
 Test the login endpoint:
 
 ```bash
-curl -i http://172.16.88.20:5000/login
+curl -i http://ip:5000/login
 ```
 
 ---
@@ -190,7 +196,7 @@ Add the following configuration:
 ```xml
 <localfile>
   <log_format>syslog</log_format>
-  <location>/home/kali/Projects/webapp/app.log</location>
+  <location>/PATH/webapp/app.log</location>
 </localfile>
 ```
 
@@ -230,10 +236,15 @@ Add:
 
 ```xml
 <decoder name="webapp_login">
-  <prematch>WARNING [webapp] FAILED_LOGIN</prematch>
+  <prematch>FAILED_LOGIN</prematch>
+</decoder>
+
+<decoder name="webapp_login_fields">
+  <parent>webapp_login</parent>
   <regex>user='(\S+)' ip='(\S+)'</regex>
   <order>dstuser, srcip</order>
 </decoder>
+
 ```
 
 The decoder extracts:
@@ -257,13 +268,27 @@ Add:
 
 ```xml
 <group name="webapp,">
+  <!-- Base rule: Single failed login -->
+  <rule id="100001" level="3">
+    <match>FAILED_LOGIN</match>
+    <description>Web application failed login attempt.</description>
+  </rule>
 
+  <!-- Correlation rule: Brute force attack (8 failures within 120s from same IP) -->
+  <rule id="100002" level="10" frequency="8" timeframe="120">
+    <if_matched_sid>100001</if_matched_sid>
+    <same_source_ip />
+    <description>Possible web application brute force attack detected.</description>
+  </rule>
+</group>
+
+
+----Altrenative---=
+<group name="webapp,">
   <!-- Rule 100001: Individual Login Failure -->
   <rule id="100001" level="5">
     <decoded_as>webapp_login</decoded_as>
-    <description>
-      Web application failed login attempt for user $(dstuser).
-    </description>
+    <description>Web application failed login attempt for user $(dstuser).</description>
   </rule>
 
   <!-- Rule 100002: Brute-Force Threshold Correlation -->
@@ -272,16 +297,11 @@ Add:
     <same_source_ip />
     <frequency>8</frequency>
     <timeframe>120</timeframe>
-
-    <description>
-      Possible web application brute force attack detected.
-    </description>
-
+    <description>Possible web application brute force attack detected.</description>
     <mitre>
       <id>T1110</id>
     </mitre>
   </rule>
-
 </group>
 ```
 
@@ -489,12 +509,10 @@ Run from the test/attacker system:
 
 ```bash
 for i in {1..12}; do
-  curl -s -o /dev/null -w "%{http_code}\n" \
-    -X POST http://172.16.88.20:5000/login \
-    -d "username=admin&password=wrongpassword"
-
+  curl -s -o /dev/null -w "%{http_code}\n" -X POST http://ip:5000/login -d "username=admin&password=wrongpassword"
   sleep 0.2
 done
+
 ```
 
 Expected HTTP response:
@@ -506,7 +524,7 @@ Expected HTTP response:
 The application should generate multiple log entries:
 
 ```text
-FAILED_LOGIN user='admin' ip='172.16.88.20'
+FAILED_LOGIN user='admin' ip='ip'
 ```
 
 Once the configured threshold is reached, Wazuh should generate the brute-force detection event.
@@ -581,7 +599,7 @@ Look for execution of the firewall response.
 On the Kali agent:
 
 ```bash
-sudo iptables -L INPUT -n -v | grep 172.16.88.20
+sudo iptables -L INPUT -n -v | grep ip
 ```
 
 Depending on the firewall configuration and Wazuh version, the exact rule representation may differ.
