@@ -31,7 +31,7 @@ The lab covers:
 
 ```text
                  ┌──────────────────────────┐
-                 │      Attacker / Tester    │
+                 │     Attacker / Tester    │
                  │                          │
                  │  curl / Hydra            │
                  └────────────┬─────────────┘
@@ -537,7 +537,7 @@ For an authorized lab environment, Hydra can also be used to test the login form
 
 ```bash
 hydra -l admin -P /usr/share/wordlists/rockyou.txt \
-  172.16.88.20 http-post-form \
+  ip http-post-form \
   "/login:username=^USER^&password=^PASS^:F=Invalid credentials" \
   -t 4 -V
 ```
@@ -752,7 +752,7 @@ sudo /var/ossec/bin/wazuh-logtest
 Test with:
 
 ```text
-2026-09-16 03:39:09,773 WARNING [webapp] FAILED_LOGIN user='admin' ip='172.16.88.20'
+2026-09-16 03:39:09,773 WARNING [webapp] FAILED_LOGIN user='admin' ip='ip'
 ```
 
 Verify that the decoder identifies:
