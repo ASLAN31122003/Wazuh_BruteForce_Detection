@@ -183,6 +183,11 @@ The Flask application writes failed authentication events to:
 
 The Wazuh agent must be configured to monitor this file.
 
+```bash
+sudo chmod +x /PATH #/home/kali /home/kali/Projects /home/kali/Projects/webapp
+sudo chmod 644 /home/kali/Projects/webapp/app.log
+```
+
 ## 2.1 Configure the Agent
 
 On the Kali Wazuh agent:
@@ -267,23 +272,23 @@ sudo nano /var/ossec/etc/rules/local_rules.xml
 Add:
 
 ```xml
-<group name="webapp,">
-  <!-- Base rule: Single failed login -->
-  <rule id="100001" level="3">
-    <match>FAILED_LOGIN</match>
-    <description>Web application failed login attempt.</description>
-  </rule>
+cat /var/ossec/etc/rules/local_rules.xml
+<!-- Local rules -->
+<!-- Modify it at your will. -->
+<!-- Copyright (C) 2015, Wazuh Inc. -->
 
-  <!-- Correlation rule: Brute force attack (8 failures within 120s from same IP) -->
-  <rule id="100002" level="10" frequency="8" timeframe="120">
-    <if_matched_sid>100001</if_matched_sid>
-    <same_source_ip />
-    <description>Possible web application brute force attack detected.</description>
+<!-- Example (Commented out to prevent Rule 100001 duplication) -->
+<!--
+<group name="local,syslog,sshd,">
+  <rule id="100001" level="5">
+    <if_sid>5716</if_sid>
+    <srcip>1.1.1.1</srcip>
+    <description>sshd: authentication failed from IP 1.1.1.1.</description>
+    <group>authentication_failed,pci_dss_10.2.4,pci_dss_10.2.5,</group>
   </rule>
 </group>
+-->
 
-
-----Altrenative---=
 <group name="webapp,">
   <!-- Rule 100001: Individual Login Failure -->
   <rule id="100001" level="5">
@@ -292,11 +297,9 @@ Add:
   </rule>
 
   <!-- Rule 100002: Brute-Force Threshold Correlation -->
-  <rule id="100002" level="10">
+  <rule id="100002" level="10" frequency="8" timeframe="120">
     <if_matched_sid>100001</if_matched_sid>
     <same_source_ip />
-    <frequency>8</frequency>
-    <timeframe>120</timeframe>
     <description>Possible web application brute force attack detected.</description>
     <mitre>
       <id>T1110</id>
